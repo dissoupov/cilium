@@ -102,14 +102,14 @@ type NodeRegistrar struct {
 // named node's identity updates on a channel.
 type RegisterObserver struct {
 	name   string
-	idChan chan uint32
+	updateChan chan *nodeTypes.Node
 }
 
 // NewRegisterObserver returns a new RegisterObserver
-func NewRegisterObserver(name string, idChan chan uint32) *RegisterObserver {
+func NewRegisterObserver(name string, updateChan chan *nodeTypes.Node) *RegisterObserver {
 	return &RegisterObserver{
-		name:   name,
-		idChan: idChan,
+		name:       name,
+		updateChan: updateChan,
 	}
 }
 
@@ -117,9 +117,9 @@ func (o *RegisterObserver) OnUpdate(k store.Key) {
 	if n, ok := k.(*nodeTypes.Node); ok {
 		if n.NodeIdentity != 0 && n.Fullname() == o.name {
 			select {
-			case o.idChan <- n.NodeIdentity:
+			case o.updateChan <- n:
 			default:
-				// Register Node idChan would block, not sending
+				// Register Node updateChan would block, not sending
 			}
 		}
 	}
@@ -147,13 +147,13 @@ func (nr *NodeRegistrar) RegisterNode(n *nodeTypes.Node, manager NodeManager) er
 
 	var registerStore *store.SharedStore
 	if option.Config.JoinCluster {
-		nodeId := make(chan uint32, 1)
+		updates := make(chan *nodeTypes.Node, 10)
 
 		// Join the shared store for node registrations
 		registerStore, err := store.JoinSharedStore(store.Configuration{
 			Prefix:     NodeRegisterStorePrefix,
 			KeyCreator: KeyCreator,
-			Observer:   NewRegisterObserver(n.Fullname(), nodeId),
+			Observer:   NewRegisterObserver(n.Fullname(), updates),
 		})
 		if err != nil {
 			nodeStore.Release()
@@ -161,16 +161,17 @@ func (nr *NodeRegistrar) RegisterNode(n *nodeTypes.Node, manager NodeManager) er
 		}
 
 		// drain the channel of old updates first
-		for len(nodeId) > 0 {
-			<-nodeId
+		for len(updates) > 0 {
+			<-updates
 		}
 		err = registerStore.UpdateLocalKeySync(context.TODO(), n)
 		if err == nil {
 			// Wait until node identity can has been allocated by the KV store
 			select {
-			case id := <-nodeId:
-				n.NodeIdentity = id
-				identity.SetLocalNodeID(id)
+			case node := <-updates:
+				// Apply all updates to the local node
+				node.DeepCopyInto(n)
+				identity.SetLocalNodeID(n.NodeIdentity)
 			case <-time.After(defaults.NodeInitTimeout / 10):
 				registerStore.Release()
 				nodeStore.Release()

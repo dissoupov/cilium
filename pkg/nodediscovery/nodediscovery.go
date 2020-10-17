@@ -136,6 +136,7 @@ func (n *NodeDiscovery) StartDiscovery(nodeName string) {
 	n.LocalNode.ClusterID = option.Config.ClusterID
 	n.LocalNode.EncryptionKey = node.GetIPsecKeyIdentity()
 	n.LocalNode.Labels = node.GetLabels()
+	n.LocalNode.NodeIdentity = 0
 
 	if node.GetExternalIPv4() != nil {
 		n.LocalNode.IPAddresses = append(n.LocalNode.IPAddresses, nodeTypes.Address{
